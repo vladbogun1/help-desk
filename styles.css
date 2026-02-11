@@ -1,44 +1,62 @@
 html,
 body {
   height: 100%;
-  overflow: hidden;
 }
 
-body { background: #f5f7fb; }
+body {
+  background: #f5f7fb;
+  overflow: auto;
+}
 
 #appShell {
-  height: 100%;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
 }
 
-#mainRow {
-  flex: 1;
-  min-height: 0;
-}
+@media (min-width: 992px) {
+  body {
+    overflow: hidden;
+  }
 
-#mainRow > aside,
-#mainRow > main {
-  min-height: 0;
-}
+  #appShell {
+    height: 100vh;
+    min-height: 0;
+  }
 
-.sidebar-body,
-.details-body {
-  min-height: 0;
-}
+  #mainRow {
+    flex: 1;
+    min-height: 0;
+  }
 
-.details-body {
-  display: flex;
-  flex-direction: column;
-}
+  #mainRow > aside,
+  #mainRow > main {
+    min-height: 0;
+  }
 
-#detailsScroll {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding-right: .25rem;
-}
+  .sidebar-body,
+  .details-body {
+    min-height: 0;
+  }
 
+  .details-body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  #detailsScroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding-right: .25rem;
+  }
+
+  #treeList {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+}
 pre.code {
   white-space: pre-wrap;
   font-size: 12px;
@@ -63,9 +81,6 @@ pre.code {
 .meta-table td, .meta-table th { font-size: 13px; }
 
 #treeList {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
   border: 1px solid #e9ecef;
   border-radius: .5rem;
   padding: .5rem;
