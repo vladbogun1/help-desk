@@ -31,5 +31,5 @@ docker-compose up --build
 ## Заметки по обработке .cf
 - Бэкенд (FastAPI, Python) принимает `.cf`/`.cfe`/`.epf`.
 - Сохраняет входные файлы в `workspace/{jobId}/input`.
-- Устанавливает `v8unpack` через `pip install git+https://github.com/saby-integration/v8unpack.git`.
+- Устанавливает `v8unpack` через `pip install v8unpack`.
 - Пытается выполнить `v8unpack -P ...`; если инструмент недоступен/завершился с ошибкой — автоматически применяется fallback на сравнение сырых файлов.
