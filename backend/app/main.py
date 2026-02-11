@@ -308,11 +308,20 @@ def unpack_raw(cf_file: Path, output_dir: Path) -> None:
 
 def run_v8unpack(cf_file: Path, output_dir: Path) -> tuple[bool, str | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    base_cmd = ["-P", str(cf_file), str(output_dir)]
-    candidates = [
-        [CONFIG["v8unpack_path"], *base_cmd],
-        ["python", "-m", "v8unpack", *base_cmd],
+    source = str(cf_file)
+    target = str(output_dir)
+
+    candidate_args = [
+        ["-P", source, target],
+        ["-I", source, "--prefix", target],
+        ["--prefix", target, "-I", source],
     ]
+    launchers = [
+        [CONFIG["v8unpack_path"]],
+        ["python", "-m", "v8unpack"],
+    ]
+    candidates = [[*launcher, *args] for launcher in launchers for args in candidate_args]
+
     timeout_sec = CONFIG["v8unpack_timeout_sec"]
     errors: list[str] = []
 
@@ -327,7 +336,8 @@ def run_v8unpack(cf_file: Path, output_dir: Path) -> tuple[bool, str | None]:
             continue
 
         if proc.returncode != 0:
-            err_tail = (proc.stderr or proc.stdout or "").strip()[:300]
+            err_text = (proc.stderr or proc.stdout or "").strip().replace("\n", " | ")
+            err_tail = err_text[:300]
             errors.append(f"rc={proc.returncode} for {' '.join(cmd)}: {err_tail}")
             continue
 
