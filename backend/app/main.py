@@ -310,11 +310,16 @@ def run_v8unpack(cf_file: Path, output_dir: Path) -> tuple[bool, str | None]:
     output_dir.mkdir(parents=True, exist_ok=True)
     source = str(cf_file)
     target = str(output_dir)
+    core_path = str(output_dir / "_core")
+    index_path = str(output_dir / "_index")
+    temp_path = str(output_dir / "_temp")
 
+    # Different v8unpack releases expose slightly different CLI contracts.
     candidate_args = [
         ["-P", source, target],
         ["-I", source, "--prefix", target],
-        ["--prefix", target, "-I", source],
+        ["-I", source, "--prefix", target, "--core", core_path, "--index", index_path, "--temp", temp_path],
+        ["--prefix", target, "-I", source, "--core", core_path, "--index", index_path, "--temp", temp_path],
     ]
     launchers = [
         [CONFIG["v8unpack_path"]],
@@ -337,18 +342,19 @@ def run_v8unpack(cf_file: Path, output_dir: Path) -> tuple[bool, str | None]:
 
         if proc.returncode != 0:
             err_text = (proc.stderr or proc.stdout or "").strip().replace("\n", " | ")
-            err_tail = err_text[:300]
+            err_tail = err_text[:220]
             errors.append(f"rc={proc.returncode} for {' '.join(cmd)}: {err_tail}")
             continue
 
         produced_files = [p for p in output_dir.rglob("*") if p.is_file()]
-        if not produced_files:
-            errors.append(f"no files produced by {' '.join(cmd)}")
+        meaningful = [p for p in produced_files if p.name not in {"_core", "_index", "_temp"}]
+        if not meaningful:
+            errors.append(f"no unpacked files produced by {' '.join(cmd)}")
             continue
 
         return True, None
 
-    return False, "; ".join(errors) if errors else "unknown v8unpack failure"
+    return False, "; ".join(errors[-6:]) if errors else "unknown v8unpack failure"
 
 
 def normalize_tree(dir_path: Path) -> None:
