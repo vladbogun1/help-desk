@@ -51,27 +51,33 @@ function extractGroupName(objectPath) {
 }
 
 function parsePathInfo(objectPath = '') {
-  const segments = objectPath.split(' / ').map((s) => s.replace(/^[→←↕]\s*/, '').trim()).filter(Boolean);
+  const segments = objectPath
+    .split(' / ')
+    .map((s) => s.replace(/^[→←↕]\s*/, '').trim())
+    .filter(Boolean);
 
   const configSegment = segments.find((s) => /^Конфигурация\./i.test(s));
   const configName = configSegment?.replace(/^Конфигурация\./i, '').trim() || 'Без имени';
 
-  const objectSegment = segments.find((s) => {
-    const m = s.match(/^([A-Za-zА-Яа-я_]+)\./);
-    if (!m) return false;
-    return m[1] !== 'Конфигурация';
-  }) || segments[segments.length - 1] || 'Без объекта';
+  const dataSegments = segments.filter((s) => !/^Конфигурация\./i.test(s));
+  const treeSegments = [];
 
-  const objectMatch = objectSegment.match(/^([A-Za-zА-Яа-я_]+)\.(.+)$/);
-  const objectType = objectMatch?.[1] || extractGroupName(objectPath);
-  const objectName = objectMatch?.[2] || objectSegment;
+  dataSegments.forEach((segment) => {
+    const dottedParts = segment.split('.').map((x) => x.trim()).filter(Boolean);
+    if (dottedParts.length) treeSegments.push(...dottedParts);
+    else treeSegments.push(segment);
+  });
+
+  const objectType = treeSegments[0] || extractGroupName(objectPath);
+  const objectName = treeSegments[treeSegments.length - 1] || dataSegments[0] || 'Без объекта';
 
   return {
     configRoot: 'Конфигурация',
     configName,
     objectType,
     objectName,
-    objectLabel: `${objectType}.${objectName}`,
+    objectLabel: treeSegments.join(' / ') || `${objectType}.${objectName}`,
+    treeSegments,
   };
 }
 
@@ -299,7 +305,13 @@ function ensureObjectPathExpanded(objectItem) {
   if (!objectItem) return;
   setExpanded(nodeKey('root'), true);
   setExpanded(nodeKey('config', objectItem.pathInfo.configName), true);
-  setExpanded(nodeKey('type', objectItem.pathInfo.configName, objectItem.pathInfo.objectType), true);
+
+  const segments = objectItem.pathInfo.treeSegments || [];
+  let currentKey = nodeKey('config', objectItem.pathInfo.configName);
+  for (let i = 0; i < segments.length; i++) {
+    currentKey = `${currentKey}/${segments[i]}`;
+    setExpanded(currentKey, true);
+  }
 }
 
 function diffFragments(a = '', b = '') {
@@ -419,109 +431,111 @@ function filteredObjects() {
 }
 
 function buildTree(objects) {
-  const root = { name: 'Конфигурация', count: 0, configs: [] };
+  const root = { key: nodeKey('root'), name: 'Конфигурация', count: 0, children: [], objects: [] };
   const configMap = new Map();
 
   for (const obj of objects) {
-    const { configName, objectType } = obj.pathInfo;
+    const configName = obj.pathInfo.configName || 'Без имени';
 
     if (!configMap.has(configName)) {
-      configMap.set(configName, { name: configName, count: 0, types: [], typeMap: new Map() });
-      root.configs.push(configMap.get(configName));
+      const cfgNode = {
+        key: nodeKey('config', configName),
+        name: configName,
+        count: 0,
+        children: [],
+        childMap: new Map(),
+        objects: [],
+      };
+      configMap.set(configName, cfgNode);
+      root.children.push(cfgNode);
     }
 
-    const configNode = configMap.get(configName);
-    configNode.count += obj.count;
+    const cfgNode = configMap.get(configName);
+    cfgNode.count += obj.count;
+    root.count += obj.count;
 
-    if (!configNode.typeMap.has(objectType)) {
-      configNode.typeMap.set(objectType, { name: objectType, count: 0, objects: [] });
-      configNode.types.push(configNode.typeMap.get(objectType));
-    }
+    let currentNode = cfgNode;
+    const segments = obj.pathInfo.treeSegments || [];
 
-    const typeNode = configNode.typeMap.get(objectType);
-    typeNode.count += obj.count;
-    typeNode.objects.push(obj);
-  }
+    segments.forEach((segment) => {
+      if (!currentNode.childMap.has(segment)) {
+        const childNode = {
+          key: `${currentNode.key}/${segment}`,
+          name: segment,
+          count: 0,
+          children: [],
+          childMap: new Map(),
+          objects: [],
+        };
+        currentNode.childMap.set(segment, childNode);
+        currentNode.children.push(childNode);
+      }
 
-  root.count = objects.reduce((acc, o) => acc + o.count, 0);
-
-  root.configs.forEach((cfg) => {
-    cfg.types.forEach((typeNode) => {
-      if (state.filters.sortBy === 'countAsc') typeNode.objects.sort((a, b) => a.count - b.count);
-      if (state.filters.sortBy === 'countDesc') typeNode.objects.sort((a, b) => b.count - a.count);
-      if (state.filters.sortBy === 'nameAsc') typeNode.objects.sort((a, b) => a.pathInfo.objectName.localeCompare(b.pathInfo.objectName, 'ru'));
+      currentNode = currentNode.childMap.get(segment);
+      currentNode.count += obj.count;
     });
 
-    if (state.filters.sortBy === 'countAsc') cfg.types.sort((a, b) => a.count - b.count);
-    if (state.filters.sortBy === 'countDesc') cfg.types.sort((a, b) => b.count - a.count);
-    if (state.filters.sortBy === 'nameAsc') cfg.types.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    currentNode.objects.push(obj);
+  }
 
-    delete cfg.typeMap;
-  });
+  const sortNodes = (nodes) => {
+    nodes.forEach((node) => {
+      node.objects.sort((a, b) => {
+        if (state.filters.sortBy === 'countAsc') return a.count - b.count;
+        if (state.filters.sortBy === 'countDesc') return b.count - a.count;
+        return a.pathInfo.objectName.localeCompare(b.pathInfo.objectName, 'ru');
+      });
 
-  if (state.filters.sortBy === 'countAsc') root.configs.sort((a, b) => a.count - b.count);
-  if (state.filters.sortBy === 'countDesc') root.configs.sort((a, b) => b.count - a.count);
-  if (state.filters.sortBy === 'nameAsc') root.configs.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      node.children = node.children.filter((child) => child.count > 0);
+      sortNodes(node.children);
 
+      if (state.filters.sortBy === 'countAsc') node.children.sort((a, b) => a.count - b.count);
+      if (state.filters.sortBy === 'countDesc') node.children.sort((a, b) => b.count - a.count);
+      if (state.filters.sortBy === 'nameAsc') node.children.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+
+      delete node.childMap;
+    });
+  };
+
+  sortNodes(root.children);
   return root;
+}
+
+function renderTreeNode(node, selectedPath) {
+  const expanded = isExpanded(node.key);
+  const hasNested = node.children.length > 0;
+  const hasObjects = node.objects.length > 0;
+  const hasChildren = hasNested || hasObjects;
+
+  return `
+    <div class="tree-node mt-1">
+      <button type="button" class="tree-line tree-toggle ${node.key === nodeKey('root') ? 'fw-semibold' : ''}" ${hasChildren ? `data-toggle-key="${escapeHtml(node.key)}"` : ''}>
+        <span class="tree-caret">${hasChildren ? (expanded ? '▾' : '▸') : '·'}</span>
+        <span>${escapeHtml(node.name)}</span>
+        <span class="badge text-bg-light ms-1">${node.count}</span>
+      </button>
+      <div class="tree-children ${expanded ? '' : 'd-none'}">
+        ${node.children.map((child) => renderTreeNode(child, selectedPath)).join('')}
+        ${node.objects.length ? `
+          <div class="tree-leaf-list mt-1">
+            ${node.objects.map((obj) => `
+              <button class="btn btn-sm w-100 text-start tree-object ${obj.path === selectedPath ? 'active' : ''}" data-object-path="${escapeHtml(obj.path)}">
+                <div class="d-flex justify-content-between align-items-center">
+                  <span>${escapeHtml(obj.pathInfo.objectName)}</span>
+                  <span class="badge badge-risk-${obj.risk}">${obj.count}</span>
+                </div>
+              </button>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
 }
 
 function renderTree(tree) {
   const selectedPath = state.selectedObject;
-  const rootKey = nodeKey('root');
-  const rootExpanded = isExpanded(rootKey);
-
-  el.treeList.innerHTML = `
-    <div class="tree-node tree-root mb-2">
-      <button type="button" class="tree-line tree-toggle fw-semibold" data-toggle-key="${rootKey}">
-        <span class="tree-caret">${rootExpanded ? '▾' : '▸'}</span>
-        <span>${escapeHtml(tree.name)}</span>
-        <span class="badge text-bg-light ms-1">${tree.count}</span>
-      </button>
-      <div class="tree-children ${rootExpanded ? '' : 'd-none'}">
-        ${tree.configs.map((cfg) => {
-          const configKey = nodeKey('config', cfg.name);
-          const configExpanded = isExpanded(configKey);
-
-          return `
-            <div class="tree-node mt-2">
-              <button type="button" class="tree-line tree-toggle" data-toggle-key="${escapeHtml(configKey)}">
-                <span class="tree-caret">${configExpanded ? '▾' : '▸'}</span>
-                <span>${escapeHtml(cfg.name)}</span>
-                <span class="badge text-bg-light ms-1">${cfg.count}</span>
-              </button>
-              <div class="tree-children ${configExpanded ? '' : 'd-none'}">
-                ${cfg.types.map((typeNode) => {
-                  const typeKey = nodeKey('type', cfg.name, typeNode.name);
-                  const typeExpanded = isExpanded(typeKey);
-
-                  return `
-                    <div class="tree-node mt-1">
-                      <button type="button" class="tree-line tree-toggle" data-toggle-key="${escapeHtml(typeKey)}">
-                        <span class="tree-caret">${typeExpanded ? '▾' : '▸'}</span>
-                        <span>${escapeHtml(typeNode.name)}</span>
-                        <span class="badge text-bg-light ms-1">${typeNode.count}</span>
-                      </button>
-                      <div class="tree-children tree-leaf-list ${typeExpanded ? '' : 'd-none'}">
-                        ${typeNode.objects.map((obj) => `
-                          <button class="btn btn-sm w-100 text-start tree-object ${obj.path === selectedPath ? 'active' : ''}" data-object-path="${escapeHtml(obj.path)}">
-                            <div class="d-flex justify-content-between align-items-center">
-                              <span>${escapeHtml(obj.pathInfo.objectName)}</span>
-                              <span class="badge badge-risk-${obj.risk}">${obj.count}</span>
-                            </div>
-                          </button>
-                        `).join('')}
-                      </div>
-                    </div>
-                  `;
-                }).join('')}
-              </div>
-            </div>
-          `;
-        }).join('')}
-      </div>
-    </div>
-  `;
+  el.treeList.innerHTML = renderTreeNode(tree, selectedPath);
 }
 
 function renderDetails(objects) {
@@ -564,7 +578,7 @@ function render() {
   const tree = buildTree(objects);
   const total = objects.reduce((acc, o) => acc + o.count, 0);
 
-  el.summary.textContent = `Файл: ${state.reportName || '—'} · Конфигураций: ${tree.configs.length} · Объектов: ${objects.length} · Конфликтов: ${total}`;
+  el.summary.textContent = `Файл: ${state.reportName || '—'} · Конфигураций: ${tree.children.length} · Объектов: ${objects.length} · Конфликтов: ${total}`;
 
   renderTree(tree);
   renderDetails(objects);
