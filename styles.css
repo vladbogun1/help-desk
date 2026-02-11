@@ -7,10 +7,16 @@ pre.code {
   border: 1px solid #e9ecef;
   border-radius: .5rem;
   padding: .75rem;
-  min-height: 140px;
+  min-height: 120px;
+  margin: 0;
 }
-.list-group-item.active small { color: #dbe7ff !important; }
-.chunk { border: 1px solid #e9ecef; border-radius: .5rem; }
+.chunk { border: 1px solid #e9ecef; border-radius: .5rem; background: #fff; }
 .badge-risk-high { background:#dc3545; }
 .badge-risk-medium { background:#fd7e14; }
 .badge-risk-low { background:#198754; }
+.group-item.active { background: #0d6efd; color: #fff; }
+.group-item { border: 1px solid #e9ecef; border-radius: .5rem; }
+.diff-del { background: #ffe4e6; color: #8b1d2c; }
+.diff-add { background: #e6ffed; color: #176c35; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.meta-table td, .meta-table th { font-size: 13px; }
