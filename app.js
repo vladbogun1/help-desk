@@ -22,6 +22,10 @@ const el = {
 
 const headerRe = /^(Изменено:\s*\d+\s*-\s*\d+|Объект присутствует только в основной конфигурации:\s*\d+\s*-\s*\d+|Объект присутствует только в файле:\s*\d+\s*-\s*\d+)/;
 
+function countTabs(raw = '') {
+  return (raw.match(/^\t*/) || [''])[0].length;
+}
+
 const cleanNode = (text) => text
   .replace(/^[-\s]*/, '')
   .replace(/^\*\*\*\s?/, '')
@@ -84,6 +88,33 @@ function parseMetaPairs(neutral) {
   return rows.filter((r) => r.oldValue || r.newValue);
 }
 
+function parseValueMetaFromContext(lines, startIndex, parentTabs) {
+  const ctx = [];
+  let j = startIndex + 1;
+
+  for (; j < lines.length; j++) {
+    const raw = lines[j] ?? '';
+    const trimmed = raw.trim();
+    const tabs = countTabs(raw);
+
+    if (/^\t*-\s+/.test(raw) && tabs <= parentTabs) break;
+    if (headerRe.test(trimmed) && tabs <= parentTabs + 1) break;
+    if (trimmed) ctx.push(trimmed);
+  }
+
+  if (!ctx.length) return null;
+  const joined = ctx.join(' ');
+  const looksLikeValueMeta = /Основная\s+конфигурация/i.test(joined)
+    && /Файл/i.test(joined)
+    && /Значение\s*:/i.test(joined);
+
+  if (!looksLikeValueMeta) return null;
+
+  const normalized = ctx.map((line) => line.startsWith('"') ? line : `"${line}"`);
+  const rows = parseMetaPairs(normalized);
+  return { rows, nextIndex: j - 1 };
+}
+
 function parseReport(text) {
   const lines = text.replace(/\r\n/g, '\n').split('\n');
   const stack = [];
@@ -91,13 +122,34 @@ function parseReport(text) {
 
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i] ?? '';
-    const tabs = (raw.match(/^\t*/) || [''])[0].length;
+    const tabs = countTabs(raw);
     const trimmed = raw.trim();
 
     if (/^\t*-\s+/.test(raw)) {
       const nodeText = raw.replace(/^\t*-\s+/, '');
       stack[tabs] = cleanNode(nodeText);
       stack.length = tabs + 1;
+
+      if (/Различаются\s+значения/i.test(nodeText)) {
+        const parsedMeta = parseValueMetaFromContext(lines, i, tabs);
+        if (parsedMeta?.rows?.length) {
+          chunks.push({
+            id: `c_${chunks.length + 1}`,
+            objectPath: stack.filter(Boolean).join(' / ') || 'Без привязки',
+            group: extractGroupName(stack.filter(Boolean).join(' / ') || 'Без привязки'),
+            header: cleanNode(nodeText),
+            type: 'meta',
+            baseType: 'changed',
+            block: parsedMeta.rows.map((r) => `"Основная конфигурация: ${r.oldValue}; Файл: ${r.newValue}"`),
+            left: [],
+            right: [],
+            neutral: [],
+            metaRows: parsedMeta.rows,
+            risk: 'medium',
+          });
+          i = parsedMeta.nextIndex;
+        }
+      }
       continue;
     }
 
