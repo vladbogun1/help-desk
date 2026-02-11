@@ -1,0 +1,16 @@
+body { background: #f5f7fb; }
+pre.code {
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.35;
+  background: #fff;
+  border: 1px solid #e9ecef;
+  border-radius: .5rem;
+  padding: .75rem;
+  min-height: 140px;
+}
+.list-group-item.active small { color: #dbe7ff !important; }
+.chunk { border: 1px solid #e9ecef; border-radius: .5rem; }
+.badge-risk-high { background:#dc3545; }
+.badge-risk-medium { background:#fd7e14; }
+.badge-risk-low { background:#198754; }

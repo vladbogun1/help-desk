@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>1C Merge Report Viewer</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="container-fluid p-3">
+  <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+    <h1 class="h4 m-0 me-auto">1C Merge Report Viewer</h1>
+    <input id="fileInput" type="file" class="form-control form-control-sm w-auto" accept=".txt" />
+    <button id="saveSessionBtn" class="btn btn-sm btn-outline-secondary">Сохранить сессию</button>
+    <input id="sessionInput" type="file" class="d-none" accept=".json" />
+    <button id="loadSessionBtn" class="btn btn-sm btn-outline-secondary">Загрузить сессию</button>
+    <button id="exportBtn" class="btn btn-sm btn-primary" disabled>Экспорт resolved TXT</button>
+  </div>
+
+  <div class="row g-3">
+    <aside class="col-12 col-lg-4 col-xl-3">
+      <div class="card h-100">
+        <div class="card-body d-flex flex-column">
+          <div class="mb-2">
+            <input id="searchInput" class="form-control form-control-sm" placeholder="Поиск по объектам / коду" />
+          </div>
+          <div class="mb-2">
+            <select id="riskFilter" class="form-select form-select-sm">
+              <option value="all">Любой риск</option>
+              <option value="high">Высокий</option>
+              <option value="medium">Средний</option>
+              <option value="low">Низкий</option>
+            </select>
+          </div>
+          <div id="summary" class="small text-secondary mb-2">Загрузите отчёт.</div>
+          <div id="objectList" class="list-group list-group-flush overflow-auto"></div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="col-12 col-lg-8 col-xl-9">
+      <div class="card">
+        <div class="card-body">
+          <div id="detailsPlaceholder" class="text-secondary">Выберите объект, чтобы увидеть все конфликтные блоки.</div>
+          <div id="details"></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
