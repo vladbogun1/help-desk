@@ -4,6 +4,7 @@ import hashlib
 import shutil
 import subprocess
 import uuid
+import zlib
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from difflib import unified_diff
@@ -137,6 +138,7 @@ CONFIG = {
     "workspace_root": "/work",
     "job_ttl_minutes": 120,
     "v8unpack_path": "v8unpack",
+    "v8unpack_timeout_sec": 120,
 }
 
 cfg_path = Path(__file__).resolve().parents[1] / "src" / "main" / "resources" / "application.yml"
@@ -146,6 +148,7 @@ if cfg_path.exists():
     CONFIG["workspace_root"] = app_cfg.get("workspace-root", CONFIG["workspace_root"])
     CONFIG["job_ttl_minutes"] = int(app_cfg.get("job-ttl-minutes", CONFIG["job_ttl_minutes"]))
     CONFIG["v8unpack_path"] = app_cfg.get("v8unpack-path", CONFIG["v8unpack_path"])
+    CONFIG["v8unpack_timeout_sec"] = int(app_cfg.get("v8unpack-timeout-sec", CONFIG["v8unpack_timeout_sec"]))
 
 
 app = FastAPI(title="CF Compare", version="0.0.1")
@@ -294,16 +297,48 @@ def compare_dirs(left_dump: Path, right_dump: Path) -> tuple[list[MetadataObject
 def unpack_raw(cf_file: Path, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(cf_file, output_dir / "container.cf")
-
-
-def run_v8unpack(cf_file: Path, output_dir: Path) -> bool:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    cmd = [CONFIG["v8unpack_path"], "-P", str(cf_file), str(output_dir)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        return proc.returncode == 0
-    except FileNotFoundError:
-        return False
+        raw = cf_file.read_bytes()
+        inflated = zlib.decompress(raw, wbits=-15)
+        (output_dir / "container.raw.inflate").write_bytes(inflated)
+    except Exception:
+        # best-effort raw deflate fallback (same idea as previous Java version)
+        pass
+
+
+def run_v8unpack(cf_file: Path, output_dir: Path) -> tuple[bool, str | None]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    base_cmd = ["-P", str(cf_file), str(output_dir)]
+    candidates = [
+        [CONFIG["v8unpack_path"], *base_cmd],
+        ["python", "-m", "v8unpack", *base_cmd],
+    ]
+    timeout_sec = CONFIG["v8unpack_timeout_sec"]
+    errors: list[str] = []
+
+    for cmd in candidates:
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec, check=False)
+        except FileNotFoundError:
+            errors.append(f"missing command: {cmd[0]}")
+            continue
+        except subprocess.TimeoutExpired:
+            errors.append(f"timeout after {timeout_sec}s: {' '.join(cmd)}")
+            continue
+
+        if proc.returncode != 0:
+            err_tail = (proc.stderr or proc.stdout or "").strip()[:300]
+            errors.append(f"rc={proc.returncode} for {' '.join(cmd)}: {err_tail}")
+            continue
+
+        produced_files = [p for p in output_dir.rglob("*") if p.is_file()]
+        if not produced_files:
+            errors.append(f"no files produced by {' '.join(cmd)}")
+            continue
+
+        return True, None
+
+    return False, "; ".join(errors) if errors else "unknown v8unpack failure"
 
 
 def normalize_tree(dir_path: Path) -> None:
@@ -341,20 +376,23 @@ def run_job(m: MutableJob, left_cf: Path, right_cf: Path) -> None:
         m.progress, m.stage = 35, "Running v8unpack"
         dump_left = m.base / "dump" / "left"
         dump_right = m.base / "dump" / "right"
-        ok_left = run_v8unpack(left_cf, dump_left)
-        ok_right = run_v8unpack(right_cf, dump_right)
-        if not (ok_left and ok_right):
+        ok_left, left_err = run_v8unpack(left_cf, dump_left)
+        ok_right, right_err = run_v8unpack(right_cf, dump_right)
+        used_fallback = not (ok_left and ok_right)
+        if used_fallback:
             copy_all(raw_left, dump_left)
             copy_all(raw_right, dump_right)
+            print(f"[compare:{m.id}] v8unpack fallback enabled: left={left_err}; right={right_err}")
         normalize_tree(dump_left)
         normalize_tree(dump_right)
 
         m.progress, m.stage = 70, "Comparing metadata and files"
         objects, deltas, left_summary, right_summary, diff_summary = compare_dirs(dump_left, dump_right)
         m.finished = datetime.now(timezone.utc)
-        m.progress, m.stage = 100, "Done"
+        done_stage = "Done (with v8unpack fallback)" if used_fallback else "Done"
+        m.progress, m.stage = 100, done_stage
         m.data = JobData(
-            job=m.to_job(JobStatus.DONE, 100, "Done", None, left_summary, right_summary, diff_summary),
+            job=m.to_job(JobStatus.DONE, 100, done_stage, None, left_summary, right_summary, diff_summary),
             objects=objects,
             file_deltas=deltas,
         )
