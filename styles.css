@@ -1,4 +1,63 @@
-body { background: #f5f7fb; }
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #f5f7fb;
+  overflow: auto;
+}
+
+#appShell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 992px) {
+  body {
+    overflow: hidden;
+  }
+
+  #appShell {
+    height: 100vh;
+    min-height: 0;
+  }
+
+  #mainRow {
+    flex: 1;
+    min-height: 0;
+  }
+
+  #mainRow > aside,
+  #mainRow > main {
+    min-height: 0;
+    max-height: -webkit-fill-available;
+  }
+
+  .sidebar-body,
+  .details-body {
+    min-height: 0;
+  }
+
+  .details-body {
+    display: flex;
+    flex-direction: column;
+  }
+
+  #detailsScroll {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding-right: .25rem;
+  }
+
+  #treeList {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+  }
+}
 pre.code {
   white-space: pre-wrap;
   font-size: 12px;
@@ -10,6 +69,7 @@ pre.code {
   min-height: 120px;
   margin: 0;
 }
+
 .chunk { border: 1px solid #e9ecef; border-radius: .5rem; background: #fff; }
 .badge-risk-high { background:#dc3545; }
 .badge-risk-medium { background:#fd7e14; }
@@ -20,3 +80,84 @@ pre.code {
 .diff-add { background: #e6ffed; color: #176c35; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .meta-table td, .meta-table th { font-size: 13px; }
+
+#treeList {
+  border: 1px solid #e9ecef;
+  border-radius: .5rem;
+  padding: .5rem;
+  background: #fff;
+}
+
+.tree-line {
+  font-size: .9rem;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  padding: 0;
+}
+
+.tree-toggle:hover {
+  color: #0d6efd;
+}
+
+.tree-caret {
+  width: 1rem;
+  display: inline-block;
+  text-align: center;
+  color: #6c757d;
+}
+
+.tree-label {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tree-object-label {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.tree-line-active {
+  color: #0d6efd;
+  font-weight: 600;
+}
+
+.tree-children {
+  margin-left: .9rem;
+  padding-left: .6rem;
+  border-left: 1px dashed #dee2e6;
+}
+
+.tree-leaf-list {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  margin-top: .35rem;
+}
+
+.tree-object {
+  border: 1px solid #e9ecef;
+  border-radius: .4rem;
+  background: #fff;
+  font-size: .84rem;
+}
+
+.tree-object.active {
+  background: #0d6efd;
+  color: #fff;
+}
+
+.tree-object.active .badge {
+  background: rgba(255,255,255,.2) !important;
+  color: #fff;
+}

@@ -1,10 +1,10 @@
 const state = {
   reportName: '',
   chunks: [],
-  groups: [],
-  selectedGroup: null,
+  objects: [],
   selectedObject: null,
-  filters: { search: '', risk: 'all', type: 'all', group: 'all', sortBy: 'countDesc' },
+  expandedNodes: { root: true },
+  filters: { search: '', risk: 'all', type: 'all', group: 'all', sortBy: 'countDesc', excludeMainOnly: false },
 };
 
 const el = {
@@ -14,7 +14,8 @@ const el = {
   typeFilter: document.getElementById('typeFilter'),
   riskFilter: document.getElementById('riskFilter'),
   sortBy: document.getElementById('sortBy'),
-  groupList: document.getElementById('groupList'),
+  hideMainOnlyToggle: document.getElementById('hideMainOnlyToggle'),
+  treeList: document.getElementById('treeList'),
   details: document.getElementById('details'),
   detailsPlaceholder: document.getElementById('detailsPlaceholder'),
   summary: document.getElementById('summary'),
@@ -48,6 +49,37 @@ function extractGroupName(objectPath) {
     if (m) return m[1];
   }
   return 'Прочее';
+}
+
+function parsePathInfo(objectPath = '') {
+  const segments = objectPath
+    .split(' / ')
+    .map((s) => s.replace(/^[→←↕]\s*/, '').trim())
+    .filter(Boolean);
+
+  const configSegment = segments.find((s) => /^Конфигурация\./i.test(s));
+  const configName = configSegment?.replace(/^Конфигурация\./i, '').trim() || 'Без имени';
+
+  const dataSegments = segments.filter((s) => !/^Конфигурация\./i.test(s));
+  const treeSegments = [];
+
+  dataSegments.forEach((segment) => {
+    const dottedParts = segment.split('.').map((x) => x.trim()).filter(Boolean);
+    if (dottedParts.length) treeSegments.push(...dottedParts);
+    else treeSegments.push(segment);
+  });
+
+  const objectType = treeSegments[0] || extractGroupName(objectPath);
+  const objectName = treeSegments[treeSegments.length - 1] || dataSegments[0] || 'Без объекта';
+
+  return {
+    configRoot: 'Конфигурация',
+    configName,
+    objectType,
+    objectName,
+    objectLabel: treeSegments.join(' / ') || `${objectType}.${objectName}`,
+    treeSegments,
+  };
 }
 
 function classifyChunkType(type, neutral) {
@@ -133,10 +165,12 @@ function parseReport(text) {
       if (/Различаются\s+значения/i.test(nodeText)) {
         const parsedMeta = parseValueMetaFromContext(lines, i, tabs);
         if (parsedMeta?.rows?.length) {
+          const objectPath = stack.filter(Boolean).join(' / ') || 'Без привязки';
           chunks.push({
             id: `c_${chunks.length + 1}`,
-            objectPath: stack.filter(Boolean).join(' / ') || 'Без привязки',
-            group: extractGroupName(stack.filter(Boolean).join(' / ') || 'Без привязки'),
+            objectPath,
+            group: extractGroupName(objectPath),
+            pathInfo: parsePathInfo(objectPath),
             header: cleanNode(nodeText),
             type: 'meta',
             baseType: 'changed',
@@ -191,6 +225,7 @@ function parseReport(text) {
       id: `c_${chunks.length + 1}`,
       objectPath,
       group: extractGroupName(objectPath),
+      pathInfo: parsePathInfo(objectPath),
       header: trimmed,
       type,
       baseType,
@@ -205,30 +240,39 @@ function parseReport(text) {
     i = j - 1;
   }
 
-  return buildGroups(chunks);
+  return buildObjects(chunks);
 }
 
-function buildGroups(chunks) {
-  const groupMap = new Map();
-  for (const c of chunks) {
-    if (!groupMap.has(c.group)) groupMap.set(c.group, new Map());
-    const objMap = groupMap.get(c.group);
-    if (!objMap.has(c.objectPath)) objMap.set(c.objectPath, []);
-    objMap.get(c.objectPath).push(c);
+function buildObjects(chunks) {
+  const objectMap = new Map();
+
+  for (const chunk of chunks) {
+    const key = chunk.objectPath;
+    if (!objectMap.has(key)) {
+      objectMap.set(key, {
+        id: `o_${objectMap.size + 1}`,
+        path: key,
+        pathInfo: chunk.pathInfo,
+        chunks: [],
+      });
+    }
+    objectMap.get(key).chunks.push(chunk);
   }
 
-  const groups = [...groupMap.entries()].map(([groupName, objMap]) => {
-    const objects = [...objMap.entries()].map(([name, chunksList]) => {
-      const stat = { high: 0, medium: 0, low: 0 };
-      chunksList.forEach((c) => stat[c.risk] += 1);
-      const risk = stat.high ? 'high' : stat.medium ? 'medium' : 'low';
-      return { name, chunks: chunksList, ...stat, risk };
-    });
-    const count = objects.reduce((acc, o) => acc + o.chunks.length, 0);
-    return { name: groupName, objects, count };
+  const objects = [...objectMap.values()].map((obj) => {
+    const stat = { high: 0, medium: 0, low: 0 };
+    obj.chunks.forEach((c) => { stat[c.risk] += 1; });
+    return {
+      ...obj,
+      high: stat.high,
+      medium: stat.medium,
+      low: stat.low,
+      risk: stat.high ? 'high' : stat.medium ? 'medium' : 'low',
+      count: obj.chunks.length,
+    };
   });
 
-  return { chunks, groups };
+  return { chunks, objects };
 }
 
 function typeLabel(type) {
@@ -241,6 +285,35 @@ function typeLabel(type) {
 
 function riskLabel(r) { return r === 'high' ? 'Высокий' : r === 'medium' ? 'Средний' : 'Низкий'; }
 function escapeHtml(s = '') { return s.replace(/[&<>"']/g, (ch) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch])); }
+function escapeHtmlAttr(s = '') { return s.replace(/[^a-zA-Z0-9_-]/g, '_'); }
+
+function nodeKey(level, configName = '', objectType = '') {
+  if (level === 'root') return 'root';
+  if (level === 'config') return `config:${configName}`;
+  if (level === 'type') return `type:${configName}:${objectType}`;
+  return '';
+}
+
+function isExpanded(key) {
+  return state.expandedNodes[key] !== false;
+}
+
+function setExpanded(key, value) {
+  state.expandedNodes[key] = value;
+}
+
+function ensureObjectPathExpanded(objectItem) {
+  if (!objectItem) return;
+  setExpanded(nodeKey('root'), true);
+  setExpanded(nodeKey('config', objectItem.pathInfo.configName), true);
+
+  const segments = objectItem.pathInfo.treeSegments || [];
+  let currentKey = nodeKey('config', objectItem.pathInfo.configName);
+  for (let i = 0; i < segments.length; i++) {
+    currentKey = `${currentKey}/${segments[i]}`;
+    setExpanded(currentKey, true);
+  }
+}
 
 function diffFragments(a = '', b = '') {
   const min = Math.min(a.length, b.length);
@@ -259,15 +332,40 @@ function diffFragments(a = '', b = '') {
 }
 
 function renderDiffColumns(chunk) {
-  const left = chunk.left.length ? chunk.left : chunk.neutral;
-  const right = chunk.right.length ? chunk.right : chunk.neutral;
-  const max = Math.max(left.length, right.length);
+  let left = [];
+  let right = [];
+
+  if (chunk.baseType === 'mainOnly') {
+    left = chunk.neutral.length ? chunk.neutral : chunk.left;
+    right = [];
+  } else if (chunk.baseType === 'fileOnly') {
+    left = [];
+    right = chunk.neutral.length ? chunk.neutral : chunk.right;
+  } else {
+    left = chunk.left.length ? chunk.left : chunk.neutral;
+    right = chunk.right.length ? chunk.right : chunk.neutral;
+  }
+
+  const max = Math.max(left.length, right.length, 1);
   const leftRows = [];
   const rightRows = [];
 
   for (let i = 0; i < max; i++) {
     const l = left[i] ?? '';
     const r = right[i] ?? '';
+
+    if (chunk.baseType === 'mainOnly') {
+      leftRows.push(escapeHtml(l) || '&nbsp;');
+      rightRows.push('&nbsp;');
+      continue;
+    }
+
+    if (chunk.baseType === 'fileOnly') {
+      leftRows.push('&nbsp;');
+      rightRows.push(escapeHtml(r) || '&nbsp;');
+      continue;
+    }
+
     const frag = diffFragments(l, r);
     leftRows.push(frag.a || '&nbsp;');
     rightRows.push(frag.b || '&nbsp;');
@@ -309,7 +407,7 @@ function renderMetaTable(chunk) {
   `;
 }
 
-function renderChunk(chunk, idx) {
+function renderChunk(chunk, idx, objectPath) {
   const content = chunk.type === 'meta' ? renderMetaTable(chunk) : renderDiffColumns(chunk);
   return `
     <div class="accordion-item">
@@ -321,152 +419,241 @@ function renderChunk(chunk, idx) {
           <span class="badge text-bg-secondary">${typeLabel(chunk.type)}</span>
         </button>
       </h2>
-      <div id="b_${chunk.id}" class="accordion-collapse collapse" data-bs-parent="#acc_${escapeHtmlAttr(chunk.objectPath)}">
+      <div id="b_${chunk.id}" class="accordion-collapse collapse" data-bs-parent="#acc_${escapeHtmlAttr(objectPath)}">
         <div class="accordion-body">${content}</div>
       </div>
     </div>
   `;
 }
 
-function escapeHtmlAttr(s = '') { return s.replace(/[^a-zA-Z0-9_-]/g, '_'); }
+function filteredObjects() {
+  let objects = state.objects.map((o) => ({ ...o, chunks: [...o.chunks] }));
 
-function filteredGroups() {
-  let groups = state.groups.map((g) => ({ ...g, objects: [...g.objects] }));
+  objects = objects.map((o) => ({
+    ...o,
+    chunks: o.chunks.filter((c) => {
+      if (state.filters.risk !== 'all' && c.risk !== state.filters.risk) return false;
+      if (state.filters.type !== 'all' && c.type !== state.filters.type) return false;
+      if (state.filters.excludeMainOnly && c.baseType === 'mainOnly') return false;
+      if (state.filters.group !== 'all' && o.pathInfo.objectType !== state.filters.group) return false;
+      const hay = `${o.pathInfo.configName} ${o.pathInfo.objectType} ${o.pathInfo.objectName} ${o.path} ${c.header} ${c.block.join(' ')}`.toLowerCase();
+      if (state.filters.search && !hay.includes(state.filters.search.toLowerCase())) return false;
+      return true;
+    }),
+  })).filter((o) => o.chunks.length);
 
-  groups = groups.map((g) => ({
-    ...g,
-    objects: g.objects.map((o) => ({
-      ...o,
-      chunks: o.chunks.filter((c) => {
-        if (state.filters.risk !== 'all' && c.risk !== state.filters.risk) return false;
-        if (state.filters.type !== 'all' && c.type !== state.filters.type) return false;
-        const hay = `${g.name} ${o.name} ${c.header} ${c.block.join(' ')}`.toLowerCase();
-        if (state.filters.search && !hay.includes(state.filters.search.toLowerCase())) return false;
-        return true;
-      }),
-    })).filter((o) => o.chunks.length),
-  })).filter((g) => g.objects.length);
-
-  if (state.filters.group !== 'all') groups = groups.filter((g) => g.name === state.filters.group);
-
-  groups.forEach((g) => {
-    g.count = g.objects.reduce((acc, o) => acc + o.chunks.length, 0);
-    g.objects.forEach((o) => {
-      o.high = o.chunks.filter((c) => c.risk === 'high').length;
-      o.medium = o.chunks.filter((c) => c.risk === 'medium').length;
-      o.low = o.chunks.filter((c) => c.risk === 'low').length;
-      o.risk = o.high ? 'high' : o.medium ? 'medium' : 'low';
-    });
-
-    if (state.filters.sortBy === 'countAsc') g.objects.sort((a, b) => a.chunks.length - b.chunks.length);
-    if (state.filters.sortBy === 'countDesc') g.objects.sort((a, b) => b.chunks.length - a.chunks.length);
-    if (state.filters.sortBy === 'nameAsc') g.objects.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  objects.forEach((o) => {
+    o.count = o.chunks.length;
+    o.high = o.chunks.filter((c) => c.risk === 'high').length;
+    o.medium = o.chunks.filter((c) => c.risk === 'medium').length;
+    o.low = o.chunks.filter((c) => c.risk === 'low').length;
+    o.risk = o.high ? 'high' : o.medium ? 'medium' : 'low';
   });
 
-  if (state.filters.sortBy === 'countAsc') groups.sort((a, b) => a.count - b.count);
-  if (state.filters.sortBy === 'countDesc') groups.sort((a, b) => b.count - a.count);
-  if (state.filters.sortBy === 'nameAsc') groups.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  if (state.filters.sortBy === 'countAsc') objects.sort((a, b) => a.count - b.count);
+  if (state.filters.sortBy === 'countDesc') objects.sort((a, b) => b.count - a.count);
+  if (state.filters.sortBy === 'nameAsc') objects.sort((a, b) => a.pathInfo.objectName.localeCompare(b.pathInfo.objectName, 'ru'));
 
-  return groups;
+  return objects;
 }
 
-function renderGroupList(groups) {
-  el.groupList.innerHTML = groups.map((g) => {
-    const active = state.selectedGroup === g.name;
-    return `
-      <button class="btn w-100 text-start group-item mb-2 ${active ? 'active' : ''}" data-group="${escapeHtml(g.name)}">
-        <div class="d-flex justify-content-between">
-          <strong>${escapeHtml(g.name)}</strong>
-          <span class="badge text-bg-light">${g.count}</span>
-        </div>
-        <small>${g.objects.length} объектов</small>
-      </button>
-    `;
-  }).join('');
-}
+function buildTree(objects) {
+  const root = { key: nodeKey('root'), name: 'Конфигурация', count: 0, children: [], objects: [] };
+  const configMap = new Map();
 
-function renderDetails(groups) {
-  const group = groups.find((g) => g.name === state.selectedGroup) || groups[0];
-  if (!group) {
-    el.detailsPlaceholder.style.display = '';
-    el.details.innerHTML = '';
-    return;
+  for (const obj of objects) {
+    const configName = obj.pathInfo.configName || 'Без имени';
+
+    if (!configMap.has(configName)) {
+      const cfgNode = {
+        key: nodeKey('config', configName),
+        name: configName,
+        count: 0,
+        children: [],
+        childMap: new Map(),
+        objects: [],
+      };
+      configMap.set(configName, cfgNode);
+      root.children.push(cfgNode);
+    }
+
+    const cfgNode = configMap.get(configName);
+    cfgNode.count += obj.count;
+    root.count += obj.count;
+
+    let currentNode = cfgNode;
+    const segments = obj.pathInfo.treeSegments || [];
+
+    segments.forEach((segment) => {
+      if (!currentNode.childMap.has(segment)) {
+        const childNode = {
+          key: `${currentNode.key}/${segment}`,
+          name: segment,
+          count: 0,
+          children: [],
+          childMap: new Map(),
+          objects: [],
+        };
+        currentNode.childMap.set(segment, childNode);
+        currentNode.children.push(childNode);
+      }
+
+      currentNode = currentNode.childMap.get(segment);
+      currentNode.count += obj.count;
+    });
+
+    currentNode.objects.push(obj);
   }
-  state.selectedGroup = group.name;
 
-  const object = group.objects.find((o) => o.name === state.selectedObject) || group.objects[0];
+  const sortNodes = (nodes) => {
+    nodes.forEach((node) => {
+      node.objects.sort((a, b) => {
+        if (state.filters.sortBy === 'countAsc') return a.count - b.count;
+        if (state.filters.sortBy === 'countDesc') return b.count - a.count;
+        return a.pathInfo.objectName.localeCompare(b.pathInfo.objectName, 'ru');
+      });
+
+      node.children = node.children.filter((child) => child.count > 0);
+      sortNodes(node.children);
+
+      if (state.filters.sortBy === 'countAsc') node.children.sort((a, b) => a.count - b.count);
+      if (state.filters.sortBy === 'countDesc') node.children.sort((a, b) => b.count - a.count);
+      if (state.filters.sortBy === 'nameAsc') node.children.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+
+      delete node.childMap;
+    });
+  };
+
+  sortNodes(root.children);
+  return root;
+}
+
+function renderTreeNode(node, selectedPath) {
+  const expanded = isExpanded(node.key);
+  const hasNested = node.children.length > 0;
+  const hasObjects = node.objects.length > 0;
+
+  const keyAttr = encodeURIComponent(node.key);
+  const singleLeafObject = !hasNested
+    && node.objects.length === 1
+    && node.objects[0].pathInfo.objectName === node.name;
+  const hasChildren = hasNested || (hasObjects && !singleLeafObject);
+
+  const lineClasses = ['tree-line', 'tree-toggle'];
+  if (node.key === nodeKey('root')) lineClasses.push('fw-semibold');
+  if (singleLeafObject && node.objects[0].path === selectedPath) lineClasses.push('tree-line-active');
+
+  return `
+    <div class="tree-node mt-1">
+      <button
+        type="button"
+        class="${lineClasses.join(' ')}"
+        ${hasChildren ? `data-toggle-key="${keyAttr}"` : ''}
+        ${singleLeafObject ? `data-object-path="${escapeHtml(node.objects[0].path)}"` : ''}
+      >
+        <span class="tree-caret">${hasChildren ? (expanded ? '▾' : '▸') : '·'}</span>
+        <span class="tree-label">${escapeHtml(node.name)}</span>
+        <span class="badge text-bg-light ms-1">${node.count}</span>
+      </button>
+      <div class="tree-children ${expanded ? '' : 'd-none'}">
+        ${node.children.map((child) => renderTreeNode(child, selectedPath)).join('')}
+        ${node.objects.length && !singleLeafObject ? `
+          <div class="tree-leaf-list mt-1">
+            ${node.objects.map((obj) => `
+              <button class="btn btn-sm w-100 text-start tree-object ${obj.path === selectedPath ? 'active' : ''}" data-object-path="${escapeHtml(obj.path)}">
+                <div class="d-flex justify-content-between align-items-center gap-2">
+                  <span class="tree-object-label">${escapeHtml(obj.pathInfo.objectName)}</span>
+                  <span class="badge badge-risk-${obj.risk}">${obj.count}</span>
+                </div>
+              </button>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderTree(tree) {
+  const selectedPath = state.selectedObject;
+  el.treeList.innerHTML = renderTreeNode(tree, selectedPath);
+}
+
+function renderDetails(objects) {
+  const object = objects.find((o) => o.path === state.selectedObject) || objects[0];
   if (!object) {
     el.detailsPlaceholder.style.display = '';
     el.details.innerHTML = '';
     return;
   }
-  state.selectedObject = object.name;
 
+  state.selectedObject = object.path;
   el.detailsPlaceholder.style.display = 'none';
+
   el.details.innerHTML = `
     <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-      <h2 class="h5 m-0">${escapeHtml(group.name)}</h2>
-      <span class="badge text-bg-secondary">${group.count} конфликтов</span>
+      <h2 class="h5 m-0">${escapeHtml(object.pathInfo.objectLabel)}</h2>
+      <span class="badge text-bg-secondary">${object.count} конфликтов</span>
     </div>
 
-    <div class="list-group mb-3">
-      ${group.objects.map((o) => `
-        <button class="list-group-item list-group-item-action ${o.name === object.name ? 'active' : ''}" data-object="${escapeHtml(o.name)}">
-          <div class="d-flex justify-content-between">
-            <span>${escapeHtml(o.name)}</span>
-            <span class="badge badge-risk-${o.risk}">${o.chunks.length}</span>
-          </div>
-        </button>
-      `).join('')}
+    <div class="small text-secondary mb-3">
+      ${escapeHtml(object.pathInfo.configRoot)} / ${escapeHtml(object.pathInfo.configName)} / ${escapeHtml(object.pathInfo.objectType)} / ${escapeHtml(object.pathInfo.objectName)}
     </div>
 
-    <h3 class="h6">${escapeHtml(object.name)}</h3>
-    <div class="accordion" id="acc_${escapeHtmlAttr(object.name)}">
-      ${object.chunks.map((c, i) => renderChunk(c, i)).join('')}
+    <div class="accordion" id="acc_${escapeHtmlAttr(object.path)}">
+      ${object.chunks.map((c, i) => renderChunk(c, i, object.path)).join('')}
     </div>
   `;
 }
 
 function fillGroupFilter() {
-  const opts = ['<option value="all">Все группы</option>']
-    .concat(state.groups.map((g) => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)} (${g.count})</option>`));
+  const types = [...new Set(state.objects.map((o) => o.pathInfo.objectType))].sort((a, b) => a.localeCompare(b, 'ru'));
+  const opts = ['<option value="all">Все типы объектов</option>']
+    .concat(types.map((typeName) => `<option value="${escapeHtml(typeName)}">${escapeHtml(typeName)}</option>`));
   el.groupFilter.innerHTML = opts.join('');
 }
 
 function render() {
-  const groups = filteredGroups();
-  const total = groups.reduce((acc, g) => acc + g.count, 0);
-  el.summary.textContent = `Файл: ${state.reportName || '—'} · Групп: ${groups.length} · Конфликтов: ${total}`;
-  renderGroupList(groups);
-  renderDetails(groups);
+  const objects = filteredObjects();
+  const tree = buildTree(objects);
+  const total = objects.reduce((acc, o) => acc + o.count, 0);
+
+  el.summary.textContent = `Файл: ${state.reportName || '—'} · Конфигураций: ${tree.children.length} · Объектов: ${objects.length} · Конфликтов: ${total}`;
+
+  renderTree(tree);
+  renderDetails(objects);
 }
 
 el.fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+
   const text = decodeTextFromBuffer(await file.arrayBuffer());
   const parsed = parseReport(text);
   state.reportName = file.name;
   state.chunks = parsed.chunks;
-  state.groups = parsed.groups;
-  state.selectedGroup = state.groups[0]?.name || null;
-  state.selectedObject = state.groups[0]?.objects[0]?.name || null;
+  state.objects = parsed.objects;
+  state.selectedObject = state.objects[0]?.path || null;
+  state.expandedNodes = { root: true };
+  ensureObjectPathExpanded(state.objects[0]);
   fillGroupFilter();
   render();
 });
 
-el.groupList.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-group]');
-  if (!btn) return;
-  state.selectedGroup = btn.dataset.group;
-  state.selectedObject = null;
-  render();
-});
+el.treeList.addEventListener('click', (e) => {
+  const toggleBtn = e.target.closest('[data-toggle-key]');
+  if (toggleBtn) {
+    const key = decodeURIComponent(toggleBtn.dataset.toggleKey);
+    setExpanded(key, !isExpanded(key));
+    render();
+    return;
+  }
 
-el.details.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-object]');
+  const btn = e.target.closest('[data-object-path]');
   if (!btn) return;
-  state.selectedObject = btn.dataset.object;
+  state.selectedObject = btn.dataset.objectPath;
+  const selected = state.objects.find((o) => o.path === state.selectedObject);
+  ensureObjectPathExpanded(selected);
   render();
 });
 
@@ -475,5 +662,6 @@ el.groupFilter.addEventListener('change', (e) => { state.filters.group = e.targe
 el.typeFilter.addEventListener('change', (e) => { state.filters.type = e.target.value; render(); });
 el.riskFilter.addEventListener('change', (e) => { state.filters.risk = e.target.value; render(); });
 el.sortBy.addEventListener('change', (e) => { state.filters.sortBy = e.target.value; render(); });
+el.hideMainOnlyToggle.addEventListener('change', (e) => { state.filters.excludeMainOnly = e.target.checked; render(); });
 
 render();
