@@ -8,16 +8,16 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-<div class="container-fluid p-3">
+<div id="appShell" class="container-fluid p-3">
   <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
     <h1 class="h4 m-0 me-auto">1C Merge Report Viewer</h1>
     <input id="fileInput" type="file" class="form-control form-control-sm w-auto" accept=".txt" />
   </div>
 
-  <div class="row g-3">
-    <aside class="col-12 col-lg-4 col-xl-3">
-      <div class="card h-100">
-        <div class="card-body d-flex flex-column gap-2">
+  <div id="mainRow" class="row g-3">
+    <aside class="col-12 col-lg-4 col-xl-3 d-flex">
+      <div class="card h-100 w-100">
+        <div class="card-body d-flex flex-column gap-2 sidebar-body">
           <input id="searchInput" class="form-control form-control-sm" placeholder="Поиск: объект, группа, текст diff" />
           <select id="groupFilter" class="form-select form-select-sm">
             <option value="all">Все типы объектов</option>
@@ -41,16 +41,18 @@
             <option value="nameAsc">Сортировка: имя (А-Я)</option>
           </select>
           <div id="summary" class="small text-secondary">Загрузите отчёт.</div>
-          <div id="treeList" class="overflow-auto"></div>
+          <div id="treeList" class="flex-grow-1"></div>
         </div>
       </div>
     </aside>
 
-    <main class="col-12 col-lg-8 col-xl-9">
-      <div class="card">
-        <div class="card-body">
-          <div id="detailsPlaceholder" class="text-secondary">Выберите группу/объект, чтобы увидеть конфликты.</div>
-          <div id="details"></div>
+    <main class="col-12 col-lg-8 col-xl-9 d-flex">
+      <div class="card h-100 w-100">
+        <div class="card-body details-body">
+          <div id="detailsScroll">
+            <div id="detailsPlaceholder" class="text-secondary">Выберите группу/объект, чтобы увидеть конфликты.</div>
+            <div id="details"></div>
+          </div>
         </div>
       </div>
     </main>

@@ -3,6 +3,7 @@ const state = {
   chunks: [],
   objects: [],
   selectedObject: null,
+  expandedNodes: { root: true },
   filters: { search: '', risk: 'all', type: 'all', group: 'all', sortBy: 'countDesc' },
 };
 
@@ -279,6 +280,28 @@ function riskLabel(r) { return r === 'high' ? 'Высокий' : r === 'medium' 
 function escapeHtml(s = '') { return s.replace(/[&<>"']/g, (ch) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch])); }
 function escapeHtmlAttr(s = '') { return s.replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
+function nodeKey(level, configName = '', objectType = '') {
+  if (level === 'root') return 'root';
+  if (level === 'config') return `config:${configName}`;
+  if (level === 'type') return `type:${configName}:${objectType}`;
+  return '';
+}
+
+function isExpanded(key) {
+  return state.expandedNodes[key] !== false;
+}
+
+function setExpanded(key, value) {
+  state.expandedNodes[key] = value;
+}
+
+function ensureObjectPathExpanded(objectItem) {
+  if (!objectItem) return;
+  setExpanded(nodeKey('root'), true);
+  setExpanded(nodeKey('config', objectItem.pathInfo.configName), true);
+  setExpanded(nodeKey('type', objectItem.pathInfo.configName, objectItem.pathInfo.objectType), true);
+}
+
 function diffFragments(a = '', b = '') {
   const min = Math.min(a.length, b.length);
   let prefix = 0;
@@ -445,32 +468,57 @@ function buildTree(objects) {
 
 function renderTree(tree) {
   const selectedPath = state.selectedObject;
+  const rootKey = nodeKey('root');
+  const rootExpanded = isExpanded(rootKey);
+
   el.treeList.innerHTML = `
     <div class="tree-node tree-root mb-2">
-      <div class="tree-line fw-semibold">${escapeHtml(tree.name)} <span class="badge text-bg-light">${tree.count}</span></div>
-      <div class="tree-children">
-        ${tree.configs.map((cfg) => `
-          <div class="tree-node mt-2">
-            <div class="tree-line">${escapeHtml(cfg.name)} <span class="badge text-bg-light">${cfg.count}</span></div>
-            <div class="tree-children">
-              ${cfg.types.map((typeNode) => `
-                <div class="tree-node mt-1">
-                  <div class="tree-line">${escapeHtml(typeNode.name)} <span class="badge text-bg-light">${typeNode.count}</span></div>
-                  <div class="tree-children tree-leaf-list">
-                    ${typeNode.objects.map((obj) => `
-                      <button class="btn btn-sm w-100 text-start tree-object ${obj.path === selectedPath ? 'active' : ''}" data-object-path="${escapeHtml(obj.path)}">
-                        <div class="d-flex justify-content-between align-items-center">
-                          <span>${escapeHtml(obj.pathInfo.objectName)}</span>
-                          <span class="badge badge-risk-${obj.risk}">${obj.count}</span>
-                        </div>
+      <button type="button" class="tree-line tree-toggle fw-semibold" data-toggle-key="${rootKey}">
+        <span class="tree-caret">${rootExpanded ? '▾' : '▸'}</span>
+        <span>${escapeHtml(tree.name)}</span>
+        <span class="badge text-bg-light ms-1">${tree.count}</span>
+      </button>
+      <div class="tree-children ${rootExpanded ? '' : 'd-none'}">
+        ${tree.configs.map((cfg) => {
+          const configKey = nodeKey('config', cfg.name);
+          const configExpanded = isExpanded(configKey);
+
+          return `
+            <div class="tree-node mt-2">
+              <button type="button" class="tree-line tree-toggle" data-toggle-key="${escapeHtml(configKey)}">
+                <span class="tree-caret">${configExpanded ? '▾' : '▸'}</span>
+                <span>${escapeHtml(cfg.name)}</span>
+                <span class="badge text-bg-light ms-1">${cfg.count}</span>
+              </button>
+              <div class="tree-children ${configExpanded ? '' : 'd-none'}">
+                ${cfg.types.map((typeNode) => {
+                  const typeKey = nodeKey('type', cfg.name, typeNode.name);
+                  const typeExpanded = isExpanded(typeKey);
+
+                  return `
+                    <div class="tree-node mt-1">
+                      <button type="button" class="tree-line tree-toggle" data-toggle-key="${escapeHtml(typeKey)}">
+                        <span class="tree-caret">${typeExpanded ? '▾' : '▸'}</span>
+                        <span>${escapeHtml(typeNode.name)}</span>
+                        <span class="badge text-bg-light ms-1">${typeNode.count}</span>
                       </button>
-                    `).join('')}
-                  </div>
-                </div>
-              `).join('')}
+                      <div class="tree-children tree-leaf-list ${typeExpanded ? '' : 'd-none'}">
+                        ${typeNode.objects.map((obj) => `
+                          <button class="btn btn-sm w-100 text-start tree-object ${obj.path === selectedPath ? 'active' : ''}" data-object-path="${escapeHtml(obj.path)}">
+                            <div class="d-flex justify-content-between align-items-center">
+                              <span>${escapeHtml(obj.pathInfo.objectName)}</span>
+                              <span class="badge badge-risk-${obj.risk}">${obj.count}</span>
+                            </div>
+                          </button>
+                        `).join('')}
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
             </div>
-          </div>
-        `).join('')}
+          `;
+        }).join('')}
       </div>
     </div>
   `;
@@ -484,6 +532,7 @@ function renderDetails(objects) {
     return;
   }
 
+  ensureObjectPathExpanded(object);
   state.selectedObject = object.path;
   el.detailsPlaceholder.style.display = 'none';
 
@@ -531,11 +580,20 @@ el.fileInput.addEventListener('change', async (e) => {
   state.chunks = parsed.chunks;
   state.objects = parsed.objects;
   state.selectedObject = state.objects[0]?.path || null;
+  state.expandedNodes = { root: true };
   fillGroupFilter();
   render();
 });
 
 el.treeList.addEventListener('click', (e) => {
+  const toggleBtn = e.target.closest('[data-toggle-key]');
+  if (toggleBtn) {
+    const key = toggleBtn.dataset.toggleKey;
+    setExpanded(key, !isExpanded(key));
+    render();
+    return;
+  }
+
   const btn = e.target.closest('[data-object-path]');
   if (!btn) return;
   state.selectedObject = btn.dataset.objectPath;
