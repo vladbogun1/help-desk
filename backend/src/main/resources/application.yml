@@ -14,3 +14,4 @@ app:
   workspace-root: /work
   job-ttl-minutes: 120
   v8unpack-path: /usr/local/bin/v8unpack
+  v8unpack-timeout-sec: 120
