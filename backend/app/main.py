@@ -314,13 +314,18 @@ def run_v8unpack(cf_file: Path, output_dir: Path) -> tuple[bool, str | None]:
     index_path = str(output_dir / "_index")
     temp_path = str(output_dir / "_temp")
 
-    # Different v8unpack releases expose slightly different CLI contracts.
+    # v8unpack 1.2.x works with -E <file> <dst> for extraction.
+    # -I expects a directory source and fails on direct .cf file paths.
     candidate_args = [
+        ["-E", source, target],
         ["-P", source, target],
-        ["-I", source, "--prefix", target],
-        ["-I", source, "--prefix", target, "--core", core_path, "--index", index_path, "--temp", temp_path],
-        ["--prefix", target, "-I", source, "--core", core_path, "--index", index_path, "--temp", temp_path],
     ]
+    if cf_file.is_dir():
+        candidate_args.extend([
+            ["-I", source, "--prefix", target],
+            ["-I", source, "--prefix", target, "--core", core_path, "--index", index_path, "--temp", temp_path],
+        ])
+
     launchers = [
         [CONFIG["v8unpack_path"]],
         ["python", "-m", "v8unpack"],
