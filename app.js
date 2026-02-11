@@ -295,11 +295,27 @@ function nodeKey(level, configName = '', objectType = '') {
 }
 
 function isExpanded(key) {
-  return state.expandedNodes[key] !== false;
+  return Boolean(state.expandedNodes[key]);
 }
 
 function setExpanded(key, value) {
   state.expandedNodes[key] = value;
+}
+
+function collapseNodeWithDescendants(key) {
+  state.expandedNodes[key] = false;
+  Object.keys(state.expandedNodes)
+    .filter((k) => k.startsWith(`${key}/`))
+    .forEach((k) => { state.expandedNodes[k] = false; });
+}
+
+function initExpandedState(objects) {
+  const expanded = { root: true };
+  const configNames = [...new Set((objects || []).map((o) => o.pathInfo?.configName).filter(Boolean))];
+  configNames.forEach((name) => {
+    expanded[nodeKey('config', name)] = true;
+  });
+  state.expandedNodes = expanded;
 }
 
 function ensureObjectPathExpanded(objectItem) {
@@ -407,19 +423,20 @@ function renderMetaTable(chunk) {
   `;
 }
 
-function renderChunk(chunk, idx, objectPath) {
+function renderChunk(chunk, idx) {
   const content = chunk.type === 'meta' ? renderMetaTable(chunk) : renderDiffColumns(chunk);
+  const isOpen = idx === 0;
   return `
     <div class="accordion-item">
       <h2 class="accordion-header" id="h_${chunk.id}">
-        <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#b_${chunk.id}">
+        <button class="accordion-button ${isOpen ? '' : 'collapsed'}" type="button" data-bs-toggle="collapse" data-bs-target="#b_${chunk.id}">
           <span class="me-2">#${idx + 1}</span>
           <span class="me-2">${escapeHtml(chunk.header)}</span>
           <span class="badge ms-auto me-2 badge-risk-${chunk.risk}">${riskLabel(chunk.risk)}</span>
           <span class="badge text-bg-secondary">${typeLabel(chunk.type)}</span>
         </button>
       </h2>
-      <div id="b_${chunk.id}" class="accordion-collapse collapse" data-bs-parent="#acc_${escapeHtmlAttr(objectPath)}">
+      <div id="b_${chunk.id}" class="accordion-collapse collapse ${isOpen ? 'show' : ''}">
         <div class="accordion-body">${content}</div>
       </div>
     </div>
@@ -601,7 +618,7 @@ function renderDetails(objects) {
     </div>
 
     <div class="accordion" id="acc_${escapeHtmlAttr(object.path)}">
-      ${object.chunks.map((c, i) => renderChunk(c, i, object.path)).join('')}
+      ${object.chunks.map((c, i) => renderChunk(c, i)).join('')}
     </div>
   `;
 }
@@ -634,8 +651,7 @@ el.fileInput.addEventListener('change', async (e) => {
   state.chunks = parsed.chunks;
   state.objects = parsed.objects;
   state.selectedObject = state.objects[0]?.path || null;
-  state.expandedNodes = { root: true };
-  ensureObjectPathExpanded(state.objects[0]);
+  initExpandedState(state.objects);
   fillGroupFilter();
   render();
 });
@@ -644,7 +660,8 @@ el.treeList.addEventListener('click', (e) => {
   const toggleBtn = e.target.closest('[data-toggle-key]');
   if (toggleBtn) {
     const key = decodeURIComponent(toggleBtn.dataset.toggleKey);
-    setExpanded(key, !isExpanded(key));
+    if (isExpanded(key)) collapseNodeWithDescendants(key);
+    else setExpanded(key, true);
     render();
     return;
   }
