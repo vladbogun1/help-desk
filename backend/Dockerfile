@@ -8,7 +8,10 @@ FROM eclipse-temurin:21-jre-jammy
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 COPY scripts/install-v8unpack.sh /tmp/install-v8unpack.sh
-RUN /tmp/install-v8unpack.sh && rm -f /tmp/install-v8unpack.sh
+RUN sed -i 's/\r$//' /tmp/install-v8unpack.sh \
+    && chmod +x /tmp/install-v8unpack.sh \
+    && ( /tmp/install-v8unpack.sh || true ) \
+    && rm -f /tmp/install-v8unpack.sh
 COPY --from=build /app/target/*.jar app.jar
 VOLUME ["/work"]
 EXPOSE 8080
