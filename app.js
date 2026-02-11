@@ -1,8 +1,7 @@
 const state = {
   reportName: '',
   chunks: [],
-  groups: [],
-  selectedGroup: null,
+  objects: [],
   selectedObject: null,
   filters: { search: '', risk: 'all', type: 'all', group: 'all', sortBy: 'countDesc' },
 };
@@ -14,7 +13,7 @@ const el = {
   typeFilter: document.getElementById('typeFilter'),
   riskFilter: document.getElementById('riskFilter'),
   sortBy: document.getElementById('sortBy'),
-  groupList: document.getElementById('groupList'),
+  treeList: document.getElementById('treeList'),
   details: document.getElementById('details'),
   detailsPlaceholder: document.getElementById('detailsPlaceholder'),
   summary: document.getElementById('summary'),
@@ -48,6 +47,31 @@ function extractGroupName(objectPath) {
     if (m) return m[1];
   }
   return 'Прочее';
+}
+
+function parsePathInfo(objectPath = '') {
+  const segments = objectPath.split(' / ').map((s) => s.replace(/^[→←↕]\s*/, '').trim()).filter(Boolean);
+
+  const configSegment = segments.find((s) => /^Конфигурация\./i.test(s));
+  const configName = configSegment?.replace(/^Конфигурация\./i, '').trim() || 'Без имени';
+
+  const objectSegment = segments.find((s) => {
+    const m = s.match(/^([A-Za-zА-Яа-я_]+)\./);
+    if (!m) return false;
+    return m[1] !== 'Конфигурация';
+  }) || segments[segments.length - 1] || 'Без объекта';
+
+  const objectMatch = objectSegment.match(/^([A-Za-zА-Яа-я_]+)\.(.+)$/);
+  const objectType = objectMatch?.[1] || extractGroupName(objectPath);
+  const objectName = objectMatch?.[2] || objectSegment;
+
+  return {
+    configRoot: 'Конфигурация',
+    configName,
+    objectType,
+    objectName,
+    objectLabel: `${objectType}.${objectName}`,
+  };
 }
 
 function classifyChunkType(type, neutral) {
@@ -133,10 +157,12 @@ function parseReport(text) {
       if (/Различаются\s+значения/i.test(nodeText)) {
         const parsedMeta = parseValueMetaFromContext(lines, i, tabs);
         if (parsedMeta?.rows?.length) {
+          const objectPath = stack.filter(Boolean).join(' / ') || 'Без привязки';
           chunks.push({
             id: `c_${chunks.length + 1}`,
-            objectPath: stack.filter(Boolean).join(' / ') || 'Без привязки',
-            group: extractGroupName(stack.filter(Boolean).join(' / ') || 'Без привязки'),
+            objectPath,
+            group: extractGroupName(objectPath),
+            pathInfo: parsePathInfo(objectPath),
             header: cleanNode(nodeText),
             type: 'meta',
             baseType: 'changed',
@@ -191,6 +217,7 @@ function parseReport(text) {
       id: `c_${chunks.length + 1}`,
       objectPath,
       group: extractGroupName(objectPath),
+      pathInfo: parsePathInfo(objectPath),
       header: trimmed,
       type,
       baseType,
@@ -205,30 +232,39 @@ function parseReport(text) {
     i = j - 1;
   }
 
-  return buildGroups(chunks);
+  return buildObjects(chunks);
 }
 
-function buildGroups(chunks) {
-  const groupMap = new Map();
-  for (const c of chunks) {
-    if (!groupMap.has(c.group)) groupMap.set(c.group, new Map());
-    const objMap = groupMap.get(c.group);
-    if (!objMap.has(c.objectPath)) objMap.set(c.objectPath, []);
-    objMap.get(c.objectPath).push(c);
+function buildObjects(chunks) {
+  const objectMap = new Map();
+
+  for (const chunk of chunks) {
+    const key = chunk.objectPath;
+    if (!objectMap.has(key)) {
+      objectMap.set(key, {
+        id: `o_${objectMap.size + 1}`,
+        path: key,
+        pathInfo: chunk.pathInfo,
+        chunks: [],
+      });
+    }
+    objectMap.get(key).chunks.push(chunk);
   }
 
-  const groups = [...groupMap.entries()].map(([groupName, objMap]) => {
-    const objects = [...objMap.entries()].map(([name, chunksList]) => {
-      const stat = { high: 0, medium: 0, low: 0 };
-      chunksList.forEach((c) => stat[c.risk] += 1);
-      const risk = stat.high ? 'high' : stat.medium ? 'medium' : 'low';
-      return { name, chunks: chunksList, ...stat, risk };
-    });
-    const count = objects.reduce((acc, o) => acc + o.chunks.length, 0);
-    return { name: groupName, objects, count };
+  const objects = [...objectMap.values()].map((obj) => {
+    const stat = { high: 0, medium: 0, low: 0 };
+    obj.chunks.forEach((c) => { stat[c.risk] += 1; });
+    return {
+      ...obj,
+      high: stat.high,
+      medium: stat.medium,
+      low: stat.low,
+      risk: stat.high ? 'high' : stat.medium ? 'medium' : 'low',
+      count: obj.chunks.length,
+    };
   });
 
-  return { chunks, groups };
+  return { chunks, objects };
 }
 
 function typeLabel(type) {
@@ -241,6 +277,7 @@ function typeLabel(type) {
 
 function riskLabel(r) { return r === 'high' ? 'Высокий' : r === 'medium' ? 'Средний' : 'Низкий'; }
 function escapeHtml(s = '') { return s.replace(/[&<>"']/g, (ch) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch])); }
+function escapeHtmlAttr(s = '') { return s.replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
 function diffFragments(a = '', b = '') {
   const min = Math.min(a.length, b.length);
@@ -309,7 +346,7 @@ function renderMetaTable(chunk) {
   `;
 }
 
-function renderChunk(chunk, idx) {
+function renderChunk(chunk, idx, objectPath) {
   const content = chunk.type === 'meta' ? renderMetaTable(chunk) : renderDiffColumns(chunk);
   return `
     <div class="accordion-item">
@@ -321,152 +358,187 @@ function renderChunk(chunk, idx) {
           <span class="badge text-bg-secondary">${typeLabel(chunk.type)}</span>
         </button>
       </h2>
-      <div id="b_${chunk.id}" class="accordion-collapse collapse" data-bs-parent="#acc_${escapeHtmlAttr(chunk.objectPath)}">
+      <div id="b_${chunk.id}" class="accordion-collapse collapse" data-bs-parent="#acc_${escapeHtmlAttr(objectPath)}">
         <div class="accordion-body">${content}</div>
       </div>
     </div>
   `;
 }
 
-function escapeHtmlAttr(s = '') { return s.replace(/[^a-zA-Z0-9_-]/g, '_'); }
+function filteredObjects() {
+  let objects = state.objects.map((o) => ({ ...o, chunks: [...o.chunks] }));
 
-function filteredGroups() {
-  let groups = state.groups.map((g) => ({ ...g, objects: [...g.objects] }));
+  objects = objects.map((o) => ({
+    ...o,
+    chunks: o.chunks.filter((c) => {
+      if (state.filters.risk !== 'all' && c.risk !== state.filters.risk) return false;
+      if (state.filters.type !== 'all' && c.type !== state.filters.type) return false;
+      if (state.filters.group !== 'all' && o.pathInfo.objectType !== state.filters.group) return false;
+      const hay = `${o.pathInfo.configName} ${o.pathInfo.objectType} ${o.pathInfo.objectName} ${o.path} ${c.header} ${c.block.join(' ')}`.toLowerCase();
+      if (state.filters.search && !hay.includes(state.filters.search.toLowerCase())) return false;
+      return true;
+    }),
+  })).filter((o) => o.chunks.length);
 
-  groups = groups.map((g) => ({
-    ...g,
-    objects: g.objects.map((o) => ({
-      ...o,
-      chunks: o.chunks.filter((c) => {
-        if (state.filters.risk !== 'all' && c.risk !== state.filters.risk) return false;
-        if (state.filters.type !== 'all' && c.type !== state.filters.type) return false;
-        const hay = `${g.name} ${o.name} ${c.header} ${c.block.join(' ')}`.toLowerCase();
-        if (state.filters.search && !hay.includes(state.filters.search.toLowerCase())) return false;
-        return true;
-      }),
-    })).filter((o) => o.chunks.length),
-  })).filter((g) => g.objects.length);
-
-  if (state.filters.group !== 'all') groups = groups.filter((g) => g.name === state.filters.group);
-
-  groups.forEach((g) => {
-    g.count = g.objects.reduce((acc, o) => acc + o.chunks.length, 0);
-    g.objects.forEach((o) => {
-      o.high = o.chunks.filter((c) => c.risk === 'high').length;
-      o.medium = o.chunks.filter((c) => c.risk === 'medium').length;
-      o.low = o.chunks.filter((c) => c.risk === 'low').length;
-      o.risk = o.high ? 'high' : o.medium ? 'medium' : 'low';
-    });
-
-    if (state.filters.sortBy === 'countAsc') g.objects.sort((a, b) => a.chunks.length - b.chunks.length);
-    if (state.filters.sortBy === 'countDesc') g.objects.sort((a, b) => b.chunks.length - a.chunks.length);
-    if (state.filters.sortBy === 'nameAsc') g.objects.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  objects.forEach((o) => {
+    o.count = o.chunks.length;
+    o.high = o.chunks.filter((c) => c.risk === 'high').length;
+    o.medium = o.chunks.filter((c) => c.risk === 'medium').length;
+    o.low = o.chunks.filter((c) => c.risk === 'low').length;
+    o.risk = o.high ? 'high' : o.medium ? 'medium' : 'low';
   });
 
-  if (state.filters.sortBy === 'countAsc') groups.sort((a, b) => a.count - b.count);
-  if (state.filters.sortBy === 'countDesc') groups.sort((a, b) => b.count - a.count);
-  if (state.filters.sortBy === 'nameAsc') groups.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  if (state.filters.sortBy === 'countAsc') objects.sort((a, b) => a.count - b.count);
+  if (state.filters.sortBy === 'countDesc') objects.sort((a, b) => b.count - a.count);
+  if (state.filters.sortBy === 'nameAsc') objects.sort((a, b) => a.pathInfo.objectName.localeCompare(b.pathInfo.objectName, 'ru'));
 
-  return groups;
+  return objects;
 }
 
-function renderGroupList(groups) {
-  el.groupList.innerHTML = groups.map((g) => {
-    const active = state.selectedGroup === g.name;
-    return `
-      <button class="btn w-100 text-start group-item mb-2 ${active ? 'active' : ''}" data-group="${escapeHtml(g.name)}">
-        <div class="d-flex justify-content-between">
-          <strong>${escapeHtml(g.name)}</strong>
-          <span class="badge text-bg-light">${g.count}</span>
-        </div>
-        <small>${g.objects.length} объектов</small>
-      </button>
-    `;
-  }).join('');
-}
+function buildTree(objects) {
+  const root = { name: 'Конфигурация', count: 0, configs: [] };
+  const configMap = new Map();
 
-function renderDetails(groups) {
-  const group = groups.find((g) => g.name === state.selectedGroup) || groups[0];
-  if (!group) {
-    el.detailsPlaceholder.style.display = '';
-    el.details.innerHTML = '';
-    return;
+  for (const obj of objects) {
+    const { configName, objectType } = obj.pathInfo;
+
+    if (!configMap.has(configName)) {
+      configMap.set(configName, { name: configName, count: 0, types: [], typeMap: new Map() });
+      root.configs.push(configMap.get(configName));
+    }
+
+    const configNode = configMap.get(configName);
+    configNode.count += obj.count;
+
+    if (!configNode.typeMap.has(objectType)) {
+      configNode.typeMap.set(objectType, { name: objectType, count: 0, objects: [] });
+      configNode.types.push(configNode.typeMap.get(objectType));
+    }
+
+    const typeNode = configNode.typeMap.get(objectType);
+    typeNode.count += obj.count;
+    typeNode.objects.push(obj);
   }
-  state.selectedGroup = group.name;
 
-  const object = group.objects.find((o) => o.name === state.selectedObject) || group.objects[0];
+  root.count = objects.reduce((acc, o) => acc + o.count, 0);
+
+  root.configs.forEach((cfg) => {
+    cfg.types.forEach((typeNode) => {
+      if (state.filters.sortBy === 'countAsc') typeNode.objects.sort((a, b) => a.count - b.count);
+      if (state.filters.sortBy === 'countDesc') typeNode.objects.sort((a, b) => b.count - a.count);
+      if (state.filters.sortBy === 'nameAsc') typeNode.objects.sort((a, b) => a.pathInfo.objectName.localeCompare(b.pathInfo.objectName, 'ru'));
+    });
+
+    if (state.filters.sortBy === 'countAsc') cfg.types.sort((a, b) => a.count - b.count);
+    if (state.filters.sortBy === 'countDesc') cfg.types.sort((a, b) => b.count - a.count);
+    if (state.filters.sortBy === 'nameAsc') cfg.types.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+
+    delete cfg.typeMap;
+  });
+
+  if (state.filters.sortBy === 'countAsc') root.configs.sort((a, b) => a.count - b.count);
+  if (state.filters.sortBy === 'countDesc') root.configs.sort((a, b) => b.count - a.count);
+  if (state.filters.sortBy === 'nameAsc') root.configs.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+
+  return root;
+}
+
+function renderTree(tree) {
+  const selectedPath = state.selectedObject;
+  el.treeList.innerHTML = `
+    <div class="tree-node tree-root mb-2">
+      <div class="tree-line fw-semibold">${escapeHtml(tree.name)} <span class="badge text-bg-light">${tree.count}</span></div>
+      <div class="tree-children">
+        ${tree.configs.map((cfg) => `
+          <div class="tree-node mt-2">
+            <div class="tree-line">${escapeHtml(cfg.name)} <span class="badge text-bg-light">${cfg.count}</span></div>
+            <div class="tree-children">
+              ${cfg.types.map((typeNode) => `
+                <div class="tree-node mt-1">
+                  <div class="tree-line">${escapeHtml(typeNode.name)} <span class="badge text-bg-light">${typeNode.count}</span></div>
+                  <div class="tree-children tree-leaf-list">
+                    ${typeNode.objects.map((obj) => `
+                      <button class="btn btn-sm w-100 text-start tree-object ${obj.path === selectedPath ? 'active' : ''}" data-object-path="${escapeHtml(obj.path)}">
+                        <div class="d-flex justify-content-between align-items-center">
+                          <span>${escapeHtml(obj.pathInfo.objectName)}</span>
+                          <span class="badge badge-risk-${obj.risk}">${obj.count}</span>
+                        </div>
+                      </button>
+                    `).join('')}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderDetails(objects) {
+  const object = objects.find((o) => o.path === state.selectedObject) || objects[0];
   if (!object) {
     el.detailsPlaceholder.style.display = '';
     el.details.innerHTML = '';
     return;
   }
-  state.selectedObject = object.name;
 
+  state.selectedObject = object.path;
   el.detailsPlaceholder.style.display = 'none';
+
   el.details.innerHTML = `
     <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-      <h2 class="h5 m-0">${escapeHtml(group.name)}</h2>
-      <span class="badge text-bg-secondary">${group.count} конфликтов</span>
+      <h2 class="h5 m-0">${escapeHtml(object.pathInfo.objectLabel)}</h2>
+      <span class="badge text-bg-secondary">${object.count} конфликтов</span>
     </div>
 
-    <div class="list-group mb-3">
-      ${group.objects.map((o) => `
-        <button class="list-group-item list-group-item-action ${o.name === object.name ? 'active' : ''}" data-object="${escapeHtml(o.name)}">
-          <div class="d-flex justify-content-between">
-            <span>${escapeHtml(o.name)}</span>
-            <span class="badge badge-risk-${o.risk}">${o.chunks.length}</span>
-          </div>
-        </button>
-      `).join('')}
+    <div class="small text-secondary mb-3">
+      ${escapeHtml(object.pathInfo.configRoot)} / ${escapeHtml(object.pathInfo.configName)} / ${escapeHtml(object.pathInfo.objectType)} / ${escapeHtml(object.pathInfo.objectName)}
     </div>
 
-    <h3 class="h6">${escapeHtml(object.name)}</h3>
-    <div class="accordion" id="acc_${escapeHtmlAttr(object.name)}">
-      ${object.chunks.map((c, i) => renderChunk(c, i)).join('')}
+    <div class="accordion" id="acc_${escapeHtmlAttr(object.path)}">
+      ${object.chunks.map((c, i) => renderChunk(c, i, object.path)).join('')}
     </div>
   `;
 }
 
 function fillGroupFilter() {
-  const opts = ['<option value="all">Все группы</option>']
-    .concat(state.groups.map((g) => `<option value="${escapeHtml(g.name)}">${escapeHtml(g.name)} (${g.count})</option>`));
+  const types = [...new Set(state.objects.map((o) => o.pathInfo.objectType))].sort((a, b) => a.localeCompare(b, 'ru'));
+  const opts = ['<option value="all">Все типы объектов</option>']
+    .concat(types.map((typeName) => `<option value="${escapeHtml(typeName)}">${escapeHtml(typeName)}</option>`));
   el.groupFilter.innerHTML = opts.join('');
 }
 
 function render() {
-  const groups = filteredGroups();
-  const total = groups.reduce((acc, g) => acc + g.count, 0);
-  el.summary.textContent = `Файл: ${state.reportName || '—'} · Групп: ${groups.length} · Конфликтов: ${total}`;
-  renderGroupList(groups);
-  renderDetails(groups);
+  const objects = filteredObjects();
+  const tree = buildTree(objects);
+  const total = objects.reduce((acc, o) => acc + o.count, 0);
+
+  el.summary.textContent = `Файл: ${state.reportName || '—'} · Конфигураций: ${tree.configs.length} · Объектов: ${objects.length} · Конфликтов: ${total}`;
+
+  renderTree(tree);
+  renderDetails(objects);
 }
 
 el.fileInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+
   const text = decodeTextFromBuffer(await file.arrayBuffer());
   const parsed = parseReport(text);
   state.reportName = file.name;
   state.chunks = parsed.chunks;
-  state.groups = parsed.groups;
-  state.selectedGroup = state.groups[0]?.name || null;
-  state.selectedObject = state.groups[0]?.objects[0]?.name || null;
+  state.objects = parsed.objects;
+  state.selectedObject = state.objects[0]?.path || null;
   fillGroupFilter();
   render();
 });
 
-el.groupList.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-group]');
+el.treeList.addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-object-path]');
   if (!btn) return;
-  state.selectedGroup = btn.dataset.group;
-  state.selectedObject = null;
-  render();
-});
-
-el.details.addEventListener('click', (e) => {
-  const btn = e.target.closest('[data-object]');
-  if (!btn) return;
-  state.selectedObject = btn.dataset.object;
+  state.selectedObject = btn.dataset.objectPath;
   render();
 });
 

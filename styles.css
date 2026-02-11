@@ -20,3 +20,37 @@ pre.code {
 .diff-add { background: #e6ffed; color: #176c35; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .meta-table td, .meta-table th { font-size: 13px; }
+
+#treeList {
+  overflow: auto;
+  border: 1px solid #e9ecef;
+  border-radius: .5rem;
+  padding: .5rem;
+  background: #fff;
+}
+.tree-line { font-size: .9rem; }
+.tree-children {
+  margin-left: .9rem;
+  padding-left: .6rem;
+  border-left: 1px dashed #dee2e6;
+}
+.tree-leaf-list {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  margin-top: .35rem;
+}
+.tree-object {
+  border: 1px solid #e9ecef;
+  border-radius: .4rem;
+  background: #fff;
+  font-size: .84rem;
+}
+.tree-object.active {
+  background: #0d6efd;
+  color: #fff;
+}
+.tree-object.active .badge {
+  background: rgba(255,255,255,.2) !important;
+  color: #fff;
+}
