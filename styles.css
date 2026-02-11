@@ -161,3 +161,8 @@ pre.code {
   background: rgba(255,255,255,.2) !important;
   color: #fff;
 }
+
+.chunk-note-input {
+  min-height: 82px;
+  resize: vertical;
+}

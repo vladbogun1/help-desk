@@ -5,6 +5,7 @@ const state = {
   selectedObject: null,
   expandedNodes: { root: true },
   filters: { search: '', risk: 'all', type: 'all', group: 'all', sortBy: 'countDesc', excludeMainOnly: false },
+  notes: {},
 };
 
 const el = {
@@ -287,6 +288,43 @@ function riskLabel(r) { return r === 'high' ? 'Высокий' : r === 'medium' 
 function escapeHtml(s = '') { return s.replace(/[&<>"']/g, (ch) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[ch])); }
 function escapeHtmlAttr(s = '') { return s.replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
+function noteStorageKey(chunkId) {
+  return `chunk-note:${chunkId}`;
+}
+
+function getChunkNote(chunkId) {
+  if (Object.prototype.hasOwnProperty.call(state.notes, chunkId)) return state.notes[chunkId];
+  try {
+    const saved = localStorage.getItem(noteStorageKey(chunkId)) || '';
+    state.notes[chunkId] = saved;
+    return saved;
+  } catch {
+    state.notes[chunkId] = '';
+    return '';
+  }
+}
+
+function setChunkNote(chunkId, note) {
+  state.notes[chunkId] = note;
+  try { localStorage.setItem(noteStorageKey(chunkId), note); } catch {}
+}
+
+function renderChunkNote(chunk) {
+  const note = getChunkNote(chunk.id);
+  return `
+    <div class="chunk-note mt-3">
+      <label class="form-label small text-secondary mb-1" for="note_${chunk.id}">Заметка</label>
+      <textarea
+        id="note_${chunk.id}"
+        class="form-control form-control-sm chunk-note-input"
+        rows="3"
+        data-note-id="${chunk.id}"
+        placeholder="Добавьте заметку для этого блока..."
+      >${escapeHtml(note)}</textarea>
+    </div>
+  `;
+}
+
 function nodeKey(level, configName = '', objectType = '') {
   if (level === 'root') return 'root';
   if (level === 'config') return `config:${configName}`;
@@ -425,6 +463,7 @@ function renderMetaTable(chunk) {
 
 function renderChunk(chunk, idx) {
   const content = chunk.type === 'meta' ? renderMetaTable(chunk) : renderDiffColumns(chunk);
+  const note = getChunkNote(chunk.id);
   const isOpen = idx === 0;
   return `
     <div class="accordion-item">
@@ -432,12 +471,13 @@ function renderChunk(chunk, idx) {
         <button class="accordion-button ${isOpen ? '' : 'collapsed'}" type="button" data-bs-toggle="collapse" data-bs-target="#b_${chunk.id}">
           <span class="me-2">#${idx + 1}</span>
           <span class="me-2">${escapeHtml(chunk.header)}</span>
+          ${note.trim() ? '<span class="badge text-bg-info me-2">Есть заметка</span>' : ''}
           <span class="badge ms-auto me-2 badge-risk-${chunk.risk}">${riskLabel(chunk.risk)}</span>
           <span class="badge text-bg-secondary">${typeLabel(chunk.type)}</span>
         </button>
       </h2>
       <div id="b_${chunk.id}" class="accordion-collapse collapse ${isOpen ? 'show' : ''}">
-        <div class="accordion-body">${content}</div>
+        <div class="accordion-body">${content}${renderChunkNote(chunk)}</div>
       </div>
     </div>
   `;
@@ -680,5 +720,11 @@ el.typeFilter.addEventListener('change', (e) => { state.filters.type = e.target.
 el.riskFilter.addEventListener('change', (e) => { state.filters.risk = e.target.value; render(); });
 el.sortBy.addEventListener('change', (e) => { state.filters.sortBy = e.target.value; render(); });
 el.hideMainOnlyToggle.addEventListener('change', (e) => { state.filters.excludeMainOnly = e.target.checked; render(); });
+
+el.details.addEventListener('input', (e) => {
+  const noteField = e.target.closest('[data-note-id]');
+  if (!noteField) return;
+  setChunkNote(noteField.dataset.noteId, noteField.value);
+});
 
 render();
