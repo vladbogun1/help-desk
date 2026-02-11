@@ -1,0 +1,16 @@
+server:
+  port: 8080
+spring:
+  servlet:
+    multipart:
+      max-file-size: 512MB
+      max-request-size: 1GB
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+app:
+  workspace-root: /work
+  job-ttl-minutes: 120
+  v8unpack-path: /usr/local/bin/v8unpack
